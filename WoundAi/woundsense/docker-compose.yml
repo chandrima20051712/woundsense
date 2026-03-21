@@ -1,0 +1,66 @@
+version: "3.9"
+
+# WoundSense — Production Docker Compose
+# Deploys: FastAPI backend + Redis cache
+# Target: Railway/Render, ~₹500/month for 78K PHCs
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: woundsense-api:1.0.0
+    container_name: woundsense-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - DEBUG=false
+      - REDIS_URL=redis://redis:6379
+      - MODEL_DIR=/app/models
+      - UNET_MODEL_PATH=/app/models/wound_unet.onnx
+      - TISSUE_CLASSIFIER_PATH=/app/models/tissue_classifier.pkl
+      # Set API_KEY in .env for production
+      - API_KEY=${API_KEY:-}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-["*"]}
+    volumes:
+      # Mount trained ONNX models (not baked into image for easy updates)
+      - ./models:/app/models:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 1.5G
+          cpus: "1.5"
+
+  redis:
+    image: redis:7-alpine
+    container_name: woundsense-redis
+    restart: unless-stopped
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - redis_data:/data
+    deploy:
+      resources:
+        limits:
+          memory: 300M
+
+volumes:
+  redis_data:
+
+networks:
+  default:
+    name: woundsense-network
